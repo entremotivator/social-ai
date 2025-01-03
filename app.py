@@ -5,35 +5,25 @@ import json
 from datetime import datetime
 
 # Initialize session state
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "api_configured" not in st.session_state:
-    st.session_state.api_configured = False
+def initialize_session_state():
+    default_values = {
+        "messages": [],
+        "api_configured": False,
+        "api_url": "https://theaisource-u29564.vm.elestio.app:57987",
+        "username": "root",
+        "password": "eZfLK3X4-SX0i-UmgUBe6E",
+        "selected_model": "llama3.2",
+        "bot_personality": "You are a creative assistant specializing in crafting engaging social media posts."
+    }
+    for key, value in default_values.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
-# Default API settings
-DEFAULT_API_URL = "https://theaisource-u29564.vm.elestio.app:57987"
-DEFAULT_USERNAME = "root"
-DEFAULT_PASSWORD = "eZfLK3X4-SX0i-UmgUBe6E"
-
-# Initialize API config
-def initialize_api_config():
-    if "api_url" not in st.session_state:
-        st.session_state.api_url = DEFAULT_API_URL
-    if "username" not in st.session_state:
-        st.session_state.username = DEFAULT_USERNAME
-    if "password" not in st.session_state:
-        st.session_state.password = DEFAULT_PASSWORD
-    if "selected_model" not in st.session_state:
-        st.session_state.selected_model = "llama3.2"
-    if "bot_personality" not in st.session_state:
-        st.session_state.bot_personality = "You are a creative assistant specializing in crafting engaging social media posts."
+initialize_session_state()
 
 def send_message_to_ollama(message: str, include_context: bool = True) -> Dict:
     try:
-        headers = {
-            "Content-Type": "application/json",
-        }
-
+        headers = {"Content-Type": "application/json"}
         context = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.messages] if include_context else []
         payload = {
             "prompt": message,
@@ -41,7 +31,6 @@ def send_message_to_ollama(message: str, include_context: bool = True) -> Dict:
             "stream": False,
             "context": context,
         }
-
         response = requests.post(
             f"{st.session_state.api_url}/api/generate",
             auth=(st.session_state.username, st.session_state.password),
@@ -52,13 +41,12 @@ def send_message_to_ollama(message: str, include_context: bool = True) -> Dict:
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        st.error(f"API Error: {str(e)}")
-        return {"response": f"Error: {str(e)}"}
+        error_message = f"API Error: {str(e)}"
+        st.error(error_message)
+        return {"response": error_message}
 
 # Main application
 def main():
-    initialize_api_config()
-
     st.set_page_config(
         page_title="Social Media Post Generator",
         page_icon="🌐",
@@ -74,21 +62,20 @@ def main():
             new_api_url = st.text_input("API URL", value=st.session_state.api_url, type="password")
             new_username = st.text_input("Username", value=st.session_state.username, type="password")
             new_password = st.text_input("Password", value=st.session_state.password, type="password")
-
             if st.button("Update API Settings"):
-                st.session_state.api_url = new_api_url
-                st.session_state.username = new_username
-                st.session_state.password = new_password
-                st.success("API settings updated!")
+                if new_api_url and new_username and new_password:
+                    st.session_state.api_url = new_api_url
+                    st.session_state.username = new_username
+                    st.session_state.password = new_password
+                    st.success("API settings updated!")
+                else:
+                    st.error("Please fill in all API settings fields.")
 
-        # Bot personality
         st.markdown("### Bot Personality")
         st.session_state.bot_personality = st.text_area(
             "Customize Bot Personality",
             value=st.session_state.bot_personality
         )
-
-        # Chat controls
         st.markdown("### Chat Controls")
         if st.button("Clear Post History"):
             st.session_state.messages = []
@@ -124,7 +111,6 @@ def main():
             f"Business Info: {business_info}\n\n"
             f"{prompt}"
         )
-
         st.session_state.messages.append({
             "role": "user",
             "content": prompt_with_context,
