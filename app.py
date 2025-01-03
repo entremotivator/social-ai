@@ -1,140 +1,105 @@
-import streamlit as st
+import os
 import requests
-from typing import List, Dict
-from datetime import datetime
+import streamlit as st
+from langchain.callbacks.base import BaseCallbackHandler
+from langchain.chains import ConversationChain
+from langchain.memory import ConversationBufferMemory
+from langchain.prompts import PromptTemplate
+from langchain_community.llms import Ollama
 
-# Set Streamlit page configuration
-st.set_page_config(
-    page_title="Social Media Post Generator",
-    page_icon="🌐",
-    layout="wide"
-)
+# API Configuration
+DEFAULT_API_URL = os.getenv("API_URL", "https://theaisource-u29564.vm.elestio.app:57987")
+DEFAULT_USERNAME = os.getenv("API_USERNAME", "root")
+DEFAULT_PASSWORD = os.getenv("API_PASSWORD", "eZfLK3X4-SX0i-UmgUBe6E")
 
-# Initialize session state
-if "messages" not in st.session_state:
+class StreamHandler(BaseCallbackHandler):
+    def __init__(self, container):
+        self.container = container
+        self.text = ""
+
+    def on_llm_new_token(self, token: str, **kwargs):
+        self.text += token
+        self.container.markdown(self.text)
+
+def get_ollama_models() -> list:
+    try:
+        response = requests.get(
+            f"{DEFAULT_API_URL}/api/tags",
+            auth=(DEFAULT_USERNAME, DEFAULT_PASSWORD)
+        )
+        if response.status_code == 200:
+            models = response.json()
+            return [model['name'] for model in models['models'] if 'llama:3.2' in model['name'].lower()]
+        return []
+    except Exception as e:
+        print(f"Error fetching models: {e}")
+        return []
+
+def get_conversation_chain(model_name: str) -> ConversationChain:
+    llm = Ollama(
+        model=model_name,
+        temperature=0.2,
+        base_url=DEFAULT_API_URL,
+        auth=(DEFAULT_USERNAME, DEFAULT_PASSWORD),
+    )
+    prompt = PromptTemplate(
+        input_variables=["history", "input"], 
+        template="""Current conversation:
+                    {history}
+                    Human: {input}
+                    Assistant:""")
+    memory = ConversationBufferMemory(return_messages=True)
+    return ConversationChain(llm=llm, memory=memory, prompt=prompt, verbose=True)
+
+def on_model_change():
     st.session_state.messages = []
-if "api_configured" not in st.session_state:
-    st.session_state.api_configured = False
+    st.session_state.conversation = None
 
-# Default API settings
-DEFAULT_API_URL = "https://theaisource-u29564.vm.elestio.app:57987"
-DEFAULT_USERNAME = "root"
-DEFAULT_PASSWORD = "eZfLK3X4-SX0i-UmgUBe6E"
+def run():
+    st.title("Chat with Llama 3.2")
 
-# Initialize API config
-def initialize_api_config():
-    st.session_state.api_url = st.session_state.get("api_url", DEFAULT_API_URL)
-    st.session_state.username = st.session_state.get("username", DEFAULT_USERNAME)
-    st.session_state.password = st.session_state.get("password", DEFAULT_PASSWORD)
-    st.session_state.selected_model = st.session_state.get("selected_model", "llama3.2")
-    st.session_state.bot_personality = st.session_state.get(
-        "bot_personality",
-        "You are a creative assistant specializing in crafting engaging social media posts."
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+    if 'conversation' not in st.session_state:
+        st.session_state.conversation = None
+
+    models = get_ollama_models()
+    if not models:
+        st.warning("No Llama 3.2 models available. Please check your Ollama setup.")
+        return
+
+    model_name = st.selectbox(
+        "Select Llama 3.2 Model:",
+        models,
+        key="model_select",
+        on_change=on_model_change
     )
 
-def send_message_to_ollama(message: str, include_context: bool = True) -> Dict:
-    try:
-        headers = {"Content-Type": "application/json"}
-        context = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.messages] if include_context else []
-        payload = {
-            "prompt": message,
-            "model": st.session_state.selected_model,
-            "stream": False,
-            "context": context,
-        }
-        response = requests.post(
-            f"{st.session_state.api_url}/api/generate",
-            auth=(st.session_state.username, st.session_state.password),
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error connecting to API: {e}")
-        return {"response": f"Error: {e}"}
+    if st.session_state.conversation is None:
+        st.session_state.conversation = get_conversation_chain(model_name)
 
-def main():
-    initialize_api_config()
-    st.title("🌐 Social Media Post Generator")
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-    # Sidebar for configuration
-    with st.sidebar:
-        st.markdown("### API Configuration")
-        with st.expander("Configure API Settings"):
-            st.session_state.api_url = st.text_input("API URL", st.session_state.api_url, type="password")
-            st.session_state.username = st.text_input("Username", st.session_state.username, type="password")
-            st.session_state.password = st.text_input("Password", st.session_state.password, type="password")
+    if prompt := st.chat_input(f"Chat with {model_name}"):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-        # Bot personality
-        st.markdown("### Bot Personality")
-        st.session_state.bot_personality = st.text_area(
-            "Customize Bot Personality",
-            value=st.session_state.bot_personality
-        )
-
-        # Clear history
-        if st.button("Clear Post History"):
-            st.session_state.messages = []
-            st.success("Post history cleared!")
-
-    # Main content
-    platform = st.selectbox("Choose a platform for your post:", ["Instagram", "Twitter", "LinkedIn", "Facebook", "TikTok"])
-    post_type = st.selectbox("Select post type:", ["Promotional", "Informative", "Inspirational", "Engaging Question", "Event Announcement"])
-    character_limit = 280 if platform == "Twitter" else None
-
-    st.markdown("### Business Information")
-    business_name = st.text_input("Enter your business name:", placeholder="Your Business Name")
-    business_info = st.text_area("Enter your business information:", placeholder="Brief description of your business")
-
-    if prompt := st.text_area("Enter your idea or theme for the post:"):
-        emoji_options = {
-            "Inspirational": "✨🌟💪🔥🌈",
-            "Promotional": "🎉💼🛍️📢💰",
-            "Informative": "📚🧠💡📊🔍",
-            "Engaging Question": "❓🤔💬🔑🎯",
-            "Event Announcement": "📅📢🎶🎈📸"
-        }.get(post_type, "")
-
-        prompt_with_context = (
-            f"Platform: {platform}\n"
-            f"Post Type: {post_type}\n"
-            f"Character Limit: {character_limit or 'No Limit'}\n"
-            f"Emojis: {emoji_options}\n"
-            f"Business Name: {business_name}\n"
-            f"Business Info: {business_info}\n\n"
-            f"{prompt}"
-        )
-
-        st.session_state.messages.append({
-            "role": "user",
-            "content": prompt_with_context,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        })
-
-        with st.spinner(f"Generating post for {platform}..."):
-            response = send_message_to_ollama(prompt_with_context)
-            generated_post = response.get("response", "Unable to generate post.")
-
-        st.markdown("### Generated Post")
-        st.text_area("Your Social Media Post:", generated_post, height=150)
-
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": generated_post,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        })
-
-        if st.button("Save Post"):
-            st.success("Post saved to history!")
-
-    # Display post history
-    if st.session_state.messages:
-        st.markdown("### Post History")
-        for message in st.session_state.messages:
-            st.write(f"{message['timestamp']} - {message['role'].capitalize()}:")
-            st.text_area("", message["content"], height=100, disabled=True)
+        with st.chat_message("assistant"):
+            response_placeholder = st.empty()
+            
+            try:
+                stream_handler = StreamHandler(response_placeholder)
+                st.session_state.conversation.llm.callbacks = [stream_handler]
+                response = st.session_state.conversation.run(prompt)
+                st.session_state.conversation.llm.callbacks = []
+                st.session_state.messages.append({"role": "assistant", "content": response})
+            except Exception as e:
+                error_message = f"Error generating response: {str(e)}"
+                response_placeholder.error(error_message)
+                st.session_state.messages.append({"role": "assistant", "content": error_message})
 
 if __name__ == "__main__":
-    main()
+    run()
