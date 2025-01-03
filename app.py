@@ -32,15 +32,12 @@ def initialize_api_config():
         "You are a creative assistant specializing in crafting engaging social media posts."
     )
 
-def send_message_to_ollama(message: str, include_context: bool = True) -> Dict:
+def send_message_to_ollama(message: str) -> Dict:
     try:
         headers = {"Content-Type": "application/json"}
-        context = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.messages] if include_context else []
         payload = {
-            "prompt": message,
             "model": st.session_state.selected_model,
-            "stream": False,
-            "context": context,
+            "prompt": message
         }
         response = requests.post(
             f"{st.session_state.api_url}/api/generate",
@@ -98,20 +95,15 @@ def main():
         }.get(post_type, "")
 
         prompt_with_context = (
+            f"{st.session_state.bot_personality}\n\n"
             f"Platform: {platform}\n"
             f"Post Type: {post_type}\n"
             f"Character Limit: {character_limit or 'No Limit'}\n"
             f"Emojis: {emoji_options}\n"
             f"Business Name: {business_name}\n"
             f"Business Info: {business_info}\n\n"
-            f"{prompt}"
+            f"Generate a social media post based on this idea: {prompt}"
         )
-
-        st.session_state.messages.append({
-            "role": "user",
-            "content": prompt_with_context,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        })
 
         with st.spinner(f"Generating post for {platform}..."):
             response = send_message_to_ollama(prompt_with_context)
