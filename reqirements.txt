@@ -9,3 +9,4 @@ nltk
 pypdf
 fastapi
 aiohttp
+jsonschema
