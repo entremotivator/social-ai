@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
-import json
-from typing import Dict
+from typing import List, Dict
 from datetime import datetime
 
 # Set Streamlit page configuration
@@ -38,24 +37,17 @@ def send_message_to_ollama(message: str, include_context: bool = True) -> Dict:
         headers = {"Content-Type": "application/json"}
         context = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.messages] if include_context else []
         payload = {
-            "model": st.session_state.selected_model,
             "prompt": message,
+            "model": st.session_state.selected_model,
             "stream": False,
             "context": context,
             "format": {
                 "type": "object",
                 "properties": {
-                    "post": {
-                        "type": "string"
-                    },
-                    "hashtags": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    }
+                    "age": {"type": "integer"},
+                    "available": {"type": "boolean"}
                 },
-                "required": ["post", "hashtags"]
+                "required": ["age", "available"]
             }
         }
         response = requests.post(
@@ -63,13 +55,18 @@ def send_message_to_ollama(message: str, include_context: bool = True) -> Dict:
             auth=(st.session_state.username, st.session_state.password),
             headers=headers,
             json=payload,
-            timeout=None  # Remove timeout to prevent timeouts
+            timeout=60  # Increased timeout for long processes
         )
         response.raise_for_status()
-        return response.json()
+        # Check if the response has the required fields
+        response_data = response.json()
+        if "age" in response_data and "available" in response_data:
+            return response_data
+        else:
+            return {"response": "Error: Response missing expected fields."}
     except requests.exceptions.RequestException as e:
         st.error(f"Error connecting to API: {e}")
-        return {"error": str(e)}
+        return {"response": f"Error: {e}"}
 
 def main():
     initialize_api_config()
@@ -114,15 +111,13 @@ def main():
         }.get(post_type, "")
 
         prompt_with_context = (
-            f"{st.session_state.bot_personality}\n\n"
             f"Platform: {platform}\n"
             f"Post Type: {post_type}\n"
             f"Character Limit: {character_limit or 'No Limit'}\n"
             f"Emojis: {emoji_options}\n"
             f"Business Name: {business_name}\n"
             f"Business Info: {business_info}\n\n"
-            f"Generate a social media post based on this idea: {prompt}\n"
-            f"Provide the post content and relevant hashtags in JSON format."
+            f"{prompt}"
         )
 
         st.session_state.messages.append({
@@ -131,38 +126,28 @@ def main():
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
 
-        st.markdown("### Generated Post")
         with st.spinner(f"Generating post for {platform}..."):
             response = send_message_to_ollama(prompt_with_context)
-            if "error" in response:
-                st.error(f"Error: {response['error']}")
-            else:
-                st.text_area("Your Social Media Post:", response.get("post", ""), height=150)
-                st.write("Hashtags: " + ", ".join(response.get("hashtags", [])))
+            generated_post = response.get("response", "Unable to generate post.")
 
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": json.dumps(response),
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                })
+        st.markdown("### Generated Post")
+        st.text_area("Your Social Media Post:", generated_post, height=150)
 
-                if st.button("Save Post"):
-                    st.success("Post saved to history!")
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": generated_post,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+
+        if st.button("Save Post"):
+            st.success("Post saved to history!")
 
     # Display post history
     if st.session_state.messages:
         st.markdown("### Post History")
         for message in st.session_state.messages:
             st.write(f"{message['timestamp']} - {message['role'].capitalize()}:")
-            if message['role'] == 'assistant':
-                try:
-                    content = json.loads(message['content'])
-                    st.text_area("Post:", content.get('post', ''), height=100, disabled=True)
-                    st.write("Hashtags:", ", ".join(content.get('hashtags', [])))
-                except json.JSONDecodeError:
-                    st.text_area("", message['content'], height=100, disabled=True)
-            else:
-                st.text_area("", message['content'], height=100, disabled=True)
+            st.text_area("", message["content"], height=100, disabled=True)
 
 if __name__ == "__main__":
     main()
