@@ -10,3 +10,4 @@ pypdf
 fastapi
 aiohttp
 jsonschema
+typing-extensions
