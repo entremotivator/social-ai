@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
-import json
-from typing import Dict
+from typing import List, Dict
 from datetime import datetime
 
 # Set Streamlit page configuration
@@ -48,7 +47,7 @@ def send_message_to_ollama(message: str, include_context: bool = True) -> Dict:
             auth=(st.session_state.username, st.session_state.password),
             headers=headers,
             json=payload,
-            timeout=60  # Increased timeout for long processes
+            timeout=30
         )
         response.raise_for_status()
         return response.json()
@@ -99,14 +98,13 @@ def main():
         }.get(post_type, "")
 
         prompt_with_context = (
-            f"{st.session_state.bot_personality}\n\n"
             f"Platform: {platform}\n"
             f"Post Type: {post_type}\n"
             f"Character Limit: {character_limit or 'No Limit'}\n"
             f"Emojis: {emoji_options}\n"
             f"Business Name: {business_name}\n"
             f"Business Info: {business_info}\n\n"
-            f"Generate a social media post based on this idea: {prompt}"
+            f"{prompt}"
         )
 
         st.session_state.messages.append({
