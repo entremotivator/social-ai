@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
-from typing import List, Dict
+import json
+from typing import Dict
 from datetime import datetime
 
 # Set Streamlit page configuration
@@ -41,14 +42,6 @@ def send_message_to_ollama(message: str, include_context: bool = True) -> Dict:
             "model": st.session_state.selected_model,
             "stream": False,
             "context": context,
-            "format": {
-                "type": "object",
-                "properties": {
-                    "age": {"type": "integer"},
-                    "available": {"type": "boolean"}
-                },
-                "required": ["age", "available"]
-            }
         }
         response = requests.post(
             f"{st.session_state.api_url}/api/generate",
@@ -58,12 +51,7 @@ def send_message_to_ollama(message: str, include_context: bool = True) -> Dict:
             timeout=60  # Increased timeout for long processes
         )
         response.raise_for_status()
-        # Check if the response has the required fields
-        response_data = response.json()
-        if "age" in response_data and "available" in response_data:
-            return response_data
-        else:
-            return {"response": "Error: Response missing expected fields."}
+        return response.json()
     except requests.exceptions.RequestException as e:
         st.error(f"Error connecting to API: {e}")
         return {"response": f"Error: {e}"}
@@ -111,13 +99,14 @@ def main():
         }.get(post_type, "")
 
         prompt_with_context = (
+            f"{st.session_state.bot_personality}\n\n"
             f"Platform: {platform}\n"
             f"Post Type: {post_type}\n"
             f"Character Limit: {character_limit or 'No Limit'}\n"
             f"Emojis: {emoji_options}\n"
             f"Business Name: {business_name}\n"
             f"Business Info: {business_info}\n\n"
-            f"{prompt}"
+            f"Generate a social media post based on this idea: {prompt}"
         )
 
         st.session_state.messages.append({
