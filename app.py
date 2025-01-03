@@ -3,7 +3,6 @@ import requests
 import json
 from typing import Dict
 from datetime import datetime
-from fastapi.responses import StreamingResponse
 
 # Set Streamlit page configuration
 st.set_page_config(
@@ -34,19 +33,14 @@ def initialize_api_config():
         "You are a creative assistant specializing in crafting engaging social media posts."
     )
 
-def stream_response(response):
-    for chunk in response.iter_content(chunk_size=1024):
-        if chunk:
-            yield chunk.decode('utf-8')
-
-def send_message_to_ollama(message: str, include_context: bool = True) -> StreamingResponse:
+def send_message_to_ollama(message: str, include_context: bool = True) -> Dict:
     try:
         headers = {"Content-Type": "application/json"}
         context = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.messages] if include_context else []
         payload = {
             "model": st.session_state.selected_model,
             "prompt": message,
-            "stream": True,
+            "stream": False,
             "context": context,
             "format": {
                 "type": "object",
@@ -69,14 +63,13 @@ def send_message_to_ollama(message: str, include_context: bool = True) -> Stream
             auth=(st.session_state.username, st.session_state.password),
             headers=headers,
             json=payload,
-            stream=True,
             timeout=None  # Remove timeout to prevent timeouts
         )
         response.raise_for_status()
-        return StreamingResponse(stream_response(response), media_type="application/json")
+        return response.json()
     except requests.exceptions.RequestException as e:
         st.error(f"Error connecting to API: {e}")
-        return StreamingResponse(iter([json.dumps({"error": str(e)})]), media_type="application/json")
+        return {"error": str(e)}
 
 def main():
     initialize_api_config()
@@ -139,30 +132,22 @@ def main():
         })
 
         st.markdown("### Generated Post")
-        post_placeholder = st.empty()
-        hashtags_placeholder = st.empty()
-
         with st.spinner(f"Generating post for {platform}..."):
             response = send_message_to_ollama(prompt_with_context)
-            full_response = ""
-            for chunk in response.body_iterator:
-                full_response += chunk
-                try:
-                    data = json.loads(full_response)
-                    post_placeholder.text_area("Your Social Media Post:", data.get("post", ""), height=150)
-                    hashtags_placeholder.write("Hashtags: " + ", ".join(data.get("hashtags", [])))
-                except json.JSONDecodeError:
-                    pass  # Wait for more chunks to complete the JSON
+            if "error" in response:
+                st.error(f"Error: {response['error']}")
+            else:
+                st.text_area("Your Social Media Post:", response.get("post", ""), height=150)
+                st.write("Hashtags: " + ", ".join(response.get("hashtags", [])))
 
-        generated_post = json.loads(full_response)
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": json.dumps(generated_post),
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        })
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": json.dumps(response),
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
 
-        if st.button("Save Post"):
-            st.success("Post saved to history!")
+                if st.button("Save Post"):
+                    st.success("Post saved to history!")
 
     # Display post history
     if st.session_state.messages:
