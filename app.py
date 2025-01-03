@@ -1,7 +1,9 @@
 import streamlit as st
 import requests
-from typing import List, Dict
+import json
+from typing import Dict
 from datetime import datetime
+from fastapi.responses import StreamingResponse
 
 # Set Streamlit page configuration
 st.set_page_config(
@@ -32,25 +34,49 @@ def initialize_api_config():
         "You are a creative assistant specializing in crafting engaging social media posts."
     )
 
-def send_message_to_ollama(message: str) -> Dict:
+def stream_response(response):
+    for chunk in response.iter_content(chunk_size=1024):
+        if chunk:
+            yield chunk.decode('utf-8')
+
+def send_message_to_ollama(message: str, include_context: bool = True) -> StreamingResponse:
     try:
         headers = {"Content-Type": "application/json"}
+        context = [{"role": msg["role"], "content": msg["content"]} for msg in st.session_state.messages] if include_context else []
         payload = {
             "model": st.session_state.selected_model,
-            "prompt": message
+            "prompt": message,
+            "stream": True,
+            "context": context,
+            "format": {
+                "type": "object",
+                "properties": {
+                    "post": {
+                        "type": "string"
+                    },
+                    "hashtags": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "required": ["post", "hashtags"]
+            }
         }
         response = requests.post(
             f"{st.session_state.api_url}/api/generate",
             auth=(st.session_state.username, st.session_state.password),
             headers=headers,
             json=payload,
-            timeout=30
+            stream=True,
+            timeout=None  # Remove timeout to prevent timeouts
         )
         response.raise_for_status()
-        return response.json()
+        return StreamingResponse(stream_response(response), media_type="application/json")
     except requests.exceptions.RequestException as e:
         st.error(f"Error connecting to API: {e}")
-        return {"response": f"Error: {e}"}
+        return StreamingResponse(iter([json.dumps({"error": str(e)})]), media_type="application/json")
 
 def main():
     initialize_api_config()
@@ -102,19 +128,36 @@ def main():
             f"Emojis: {emoji_options}\n"
             f"Business Name: {business_name}\n"
             f"Business Info: {business_info}\n\n"
-            f"Generate a social media post based on this idea: {prompt}"
+            f"Generate a social media post based on this idea: {prompt}\n"
+            f"Provide the post content and relevant hashtags in JSON format."
         )
+
+        st.session_state.messages.append({
+            "role": "user",
+            "content": prompt_with_context,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+
+        st.markdown("### Generated Post")
+        post_placeholder = st.empty()
+        hashtags_placeholder = st.empty()
 
         with st.spinner(f"Generating post for {platform}..."):
             response = send_message_to_ollama(prompt_with_context)
-            generated_post = response.get("response", "Unable to generate post.")
+            full_response = ""
+            for chunk in response.body_iterator:
+                full_response += chunk
+                try:
+                    data = json.loads(full_response)
+                    post_placeholder.text_area("Your Social Media Post:", data.get("post", ""), height=150)
+                    hashtags_placeholder.write("Hashtags: " + ", ".join(data.get("hashtags", [])))
+                except json.JSONDecodeError:
+                    pass  # Wait for more chunks to complete the JSON
 
-        st.markdown("### Generated Post")
-        st.text_area("Your Social Media Post:", generated_post, height=150)
-
+        generated_post = json.loads(full_response)
         st.session_state.messages.append({
             "role": "assistant",
-            "content": generated_post,
+            "content": json.dumps(generated_post),
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
 
@@ -126,7 +169,15 @@ def main():
         st.markdown("### Post History")
         for message in st.session_state.messages:
             st.write(f"{message['timestamp']} - {message['role'].capitalize()}:")
-            st.text_area("", message["content"], height=100, disabled=True)
+            if message['role'] == 'assistant':
+                try:
+                    content = json.loads(message['content'])
+                    st.text_area("Post:", content.get('post', ''), height=100, disabled=True)
+                    st.write("Hashtags:", ", ".join(content.get('hashtags', [])))
+                except json.JSONDecodeError:
+                    st.text_area("", message['content'], height=100, disabled=True)
+            else:
+                st.text_area("", message['content'], height=100, disabled=True)
 
 if __name__ == "__main__":
     main()
